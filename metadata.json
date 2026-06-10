@@ -1,0 +1,6 @@
+{
+  "name": "EchoSelf",
+  "description": "Your private cognitive operating system and neural mirror. Track interests, decisions, and patterns with specialist AI minds.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
