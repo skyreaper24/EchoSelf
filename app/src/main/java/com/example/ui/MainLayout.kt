@@ -1,6 +1,8 @@
 package com.example.ui
 
 import androidx.compose.animation.*
+import androidx.compose.animation.core.*
+import androidx.compose.ui.draw.scale
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -28,6 +30,12 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalContext
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
+import android.content.pm.PackageManager
+import android.Manifest
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -239,6 +247,90 @@ fun MirrorTabScreen(
 
         when (subTabState) {
             "Constellation" -> {
+                // Cognitive Specialist Persona panel
+                val currentSpecialist by viewModel.selectedSpecialist.collectAsStateWithLifecycle()
+                
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "ACTIVE COGNITIVE SPECIALIST CORE",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontFamily = FontFamily.Monospace,
+                        letterSpacing = 1.5.sp
+                    )
+                    
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Color(0xFF0F0F11).copy(alpha = 0.4f), RoundedCornerShape(12.dp))
+                            .border(BorderStroke(1.dp, Color(0xFF1E293B).copy(alpha = 0.5f)), RoundedCornerShape(12.dp))
+                            .padding(4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        listOf(
+                            "Mirror" to Icons.Default.Psychology,
+                            "Planner" to Icons.Default.EventNote,
+                            "Critic" to Icons.Default.PsychologyAlt,
+                            "Scientist" to Icons.Default.Science
+                        ).forEach { (spec, icon) ->
+                            val active = currentSpecialist == spec
+                            val activeBg = when (spec) {
+                                "Planner" -> Color(0xFFFBBF24).copy(alpha = 0.18f)
+                                "Critic" -> Color(0xFFF87171).copy(alpha = 0.18f)
+                                "Scientist" -> Color(0xFF34D399).copy(alpha = 0.18f)
+                                else -> MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
+                            }
+                            val activeContent = when (spec) {
+                                "Planner" -> Color(0xFFFBBF24)
+                                "Critic" -> Color(0xFFF87171)
+                                "Scientist" -> Color(0xFF34D399)
+                                else -> MaterialTheme.colorScheme.primary
+                            }
+                            
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(38.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(if (active) activeBg else Color.Transparent)
+                                    .clickable { viewModel.selectSpecialist(spec) }
+                                    .padding(horizontal = 4.dp)
+                                    .testTag("specialist_btn_${spec.lowercase(Locale.ROOT)}"),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.Center,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Icon(
+                                        imageVector = icon,
+                                        contentDescription = spec,
+                                        tint = if (active) activeContent else Color(0xFF94A3B8),
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = spec,
+                                        color = if (active) Color.White else Color(0xFF94A3B8),
+                                        fontSize = 11.sp,
+                                        fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
+                                        fontFamily = FontFamily.SansSerif
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(4.dp))
+
                 // Constellation Canvas View Card
                 Card(
                     modifier = Modifier
@@ -255,6 +347,7 @@ fun MirrorTabScreen(
                             profiles = profiles,
                             selectedDimension = selectedDimName,
                             onDimensionSelected = { viewModel.selectDimension(it) },
+                            selectedSpecialist = currentSpecialist,
                             modifier = Modifier.fillMaxSize()
                         )
                         Box(
@@ -274,6 +367,13 @@ fun MirrorTabScreen(
                         }
                     }
                 }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // Interactive Voice Thought Uplink Capture Interface
+                VoiceUplinkSection(viewModel = viewModel)
+
+                Spacer(modifier = Modifier.height(14.dp))
 
                 // Selected dimension display details
                 AnimatedContent(
@@ -1320,6 +1420,399 @@ fun DecisionTabScreen(
                 }
             }
         )
+    }
+}
+
+@Composable
+fun VoiceUplinkSection(
+    viewModel: EchoViewModel,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    val voiceState by viewModel.voiceInputState.collectAsStateWithLifecycle()
+    
+    // Remember controller
+    val voiceController = remember(context, viewModel) {
+        VoiceInputController(context, viewModel)
+    }
+    
+    DisposableEffect(voiceController) {
+        onDispose {
+            voiceController.destroy()
+        }
+    }
+
+    // Permission tracking
+    var hasMicPermission by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.RECORD_AUDIO
+            ) == PackageManager.PERMISSION_GRANTED
+        )
+    }
+
+    val micPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        hasMicPermission = isGranted
+        if (isGranted) {
+            voiceController.startListening()
+        } else {
+            viewModel.setVoiceError("Audio recording permission is required to transcribe thoughts.")
+        }
+    }
+
+    // Custom glowing pulsing circle animation for the active mic state
+    val micPulseTransition = rememberInfiniteTransition(label = "MicPulseTransition")
+    val micPulseScale by micPulseTransition.animateFloat(
+        initialValue = 1.0f,
+        targetValue = if (voiceState.isListening) 1.25f else 1.0f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1000, easing = EaseInOutCubic),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "MicPulseScale"
+    )
+    val micPulseAlpha by micPulseTransition.animateFloat(
+        initialValue = 0.5f,
+        targetValue = if (voiceState.isListening) 0.15f else 0.4f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1000, easing = EaseInOutCubic),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "MicPulseAlpha"
+    )
+
+    // Precompiled high quality test thoughts for fallback & microphonic testing simplicity
+    val predefinedThoughts = listOf(
+        "I am feeling exceptionally focused on studying deep coding structures today." to "Focus",
+        "Worrying about this high stakes decision is keeping me anxious and alert." to "Decision",
+        "I need guidance about how to explore my creative curiosities without lost productivity." to "Curiosity",
+        "Learning neural science architectures restores my memory pathways." to "Learning"
+    )
+
+    Card(
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("voice_uplink_card"),
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF0F0F11).copy(alpha = 0.5f)),
+        border = BorderStroke(1.dp, Color(0xFF1E293B).copy(alpha = 0.6f))
+    ) {
+        Column(
+            modifier = Modifier.padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            // Header Row
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.SettingsVoice,
+                        contentDescription = "Voice Uplink",
+                        tint = Color(0xFFFBBF24),
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Text(
+                        text = "NEURAL VOICE UPLINK",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF94A3B8),
+                        fontFamily = FontFamily.Monospace,
+                        letterSpacing = 1.8.sp
+                    )
+                }
+
+                // Voice status indicator light
+                Box(
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .background(
+                            if (voiceState.isListening) Color(0xFFFBBF24).copy(alpha = 0.15f)
+                            else Color(0xFF1E293B)
+                        )
+                        .padding(horizontal = 10.dp, vertical = 4.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(6.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    if (voiceState.isListening) Color(0xFFFBBF24)
+                                    else if (voiceState.isAnalyzing) Color(0xFF34D399)
+                                    else Color(0xFF64748B)
+                                )
+                        )
+                        Text(
+                            text = if (voiceState.isListening) "LISTENING"
+                                   else if (voiceState.isAnalyzing) "COGNIZING"
+                                   else "READY",
+                            color = if (voiceState.isListening) Color(0xFFFBBF24)
+                                    else if (voiceState.isAnalyzing) Color(0xFF34D399)
+                                    else Color(0xFF64748B),
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+                }
+            }
+
+            HorizontalDivider(color = Color(0xFF1E293B).copy(alpha = 0.5f))
+
+            // Main Microphone control area
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Interactive Mic Sphere
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier.size(76.dp)
+                ) {
+                    // Pulse Ring 1
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .scale(micPulseScale)
+                            .clip(CircleShape)
+                            .background(
+                                if (voiceState.isListening) Color(0xFFFBBF24).copy(alpha = micPulseAlpha)
+                                else Color(0xFF1E293B).copy(alpha = 0.2f)
+                            )
+                            .border(
+                                width = 1.dp,
+                                color = if (voiceState.isListening) Color(0xFFFBBF24).copy(alpha = 0.5f) else Color(0xFF334155),
+                                shape = CircleShape
+                            )
+                    )
+
+                    // Core Button
+                    IconButton(
+                        onClick = {
+                            if (voiceState.isListening) {
+                                voiceController.stopListening()
+                            } else {
+                                if (hasMicPermission) {
+                                    voiceController.startListening()
+                                } else {
+                                    micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                }
+                            }
+                        },
+                        colors = IconButtonDefaults.iconButtonColors(
+                            containerColor = if (voiceState.isListening) Color(0xFFFBBF24) else Color(0xFF1E293B)
+                        ),
+                        modifier = Modifier
+                            .size(54.dp)
+                            .clip(CircleShape)
+                            .testTag("microphone_button")
+                    ) {
+                        Icon(
+                            imageVector = if (voiceState.isListening) Icons.Default.Square else Icons.Default.Mic,
+                            contentDescription = "Voice Input Toggle",
+                            tint = if (voiceState.isListening) Color.Black else Color.White,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                }
+
+                // Transcription live feed
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text(
+                        text = if (voiceState.isListening) "TRANSCRIBING THOUGHTS..."
+                               else if (voiceState.isAnalyzing) "SENTIMENT & TOPIC MATCHING..."
+                               else "TAP MICROPHONE OR SIMULATE BELOW",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF64748B),
+                        fontFamily = FontFamily.Monospace
+                    )
+
+                    Text(
+                        text = voiceState.transcript.ifBlank { "What is on your mind? Talk about learning focus, creative designs, risks, or plans..." },
+                        color = if (voiceState.transcript.isNotBlank()) Color.White else Color(0xFF64748B),
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Light,
+                        lineHeight = 18.sp
+                    )
+
+                    if (voiceState.error != null) {
+                        Text(
+                            text = voiceState.error ?: "",
+                            color = Color(0xFFF87171),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+            }
+
+            // Results Alignment Panel
+            if (voiceState.analyzedTopic != null && !voiceState.isListening && !voiceState.isAnalyzing) {
+                AnimatedVisibility(
+                    visible = true,
+                    enter = fadeIn() + expandVertically(),
+                    exit = fadeOut() + shrinkVertically()
+                ) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF070708)),
+                        border = BorderStroke(1.dp, Color(0xFF334155).copy(alpha = 0.5f)),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(6.dp)
+                                            .clip(CircleShape)
+                                            .background(Color(0xFF34D399))
+                                    )
+                                    Text(
+                                        text = "ASSOCIATED ASTRO-NODE",
+                                        fontSize = 9.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFF34D399),
+                                        fontFamily = FontFamily.Monospace
+                                    )
+                                }
+
+                                Text(
+                                    text = "+${(voiceState.scoreDelta * 100).toInt()}% SYNC BALANCE",
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFFFBBF24),
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(Color(0xFF1E293B))
+                                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                                ) {
+                                    Text(
+                                        text = "🎯 ${voiceState.analyzedTopic}",
+                                        color = Color.White,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(Color(0xFF2DD4BF).copy(alpha = 0.15f))
+                                        .border(1.dp, Color(0xFF2DD4BF).copy(alpha = 0.3f), RoundedCornerShape(8.dp))
+                                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                                ) {
+                                    Text(
+                                        text = "✨ ${voiceState.analyzedSentiment}",
+                                        color = Color(0xFF2DD4BF),
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
+                            }
+
+                            Text(
+                                text = voiceState.insight ?: "",
+                                color = Color(0xFFCBD5E1),
+                                fontSize = 12.sp,
+                                lineHeight = 16.sp,
+                                fontWeight = FontWeight.Light
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Fallback & Simulation Pills Row
+            Column(
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    text = "MIND VOICE INTEGRATION TESTER",
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF64748B),
+                    fontFamily = FontFamily.Monospace
+                )
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScrollStateFix(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    predefinedThoughts.forEachIndexed { i, (thought, topic) ->
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(20.dp))
+                                .background(Color(0xFF1E293B).copy(alpha = 0.4f))
+                                .border(1.dp, Color(0xFF334155), RoundedCornerShape(20.dp))
+                                .clickable {
+                                    viewModel.analyzeVoiceThought(thought)
+                                }
+                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                                .testTag("sim_voice_thought_$i"),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.PlayArrow,
+                                    contentDescription = null,
+                                    tint = Color(0xFFFBBF24),
+                                    modifier = Modifier.size(10.dp)
+                                )
+                                Text(
+                                    text = "Simulate $topic",
+                                    color = Color.White,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

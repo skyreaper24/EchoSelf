@@ -10,6 +10,19 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import java.util.Locale
+
+data class VoiceInputState(
+    val isListening: Boolean = false,
+    val transcript: String = "",
+    val error: String? = null,
+    val isAnalyzing: Boolean = false,
+    val analyzedTopic: String? = null,
+    val analyzedSentiment: String? = null, // "Confident", "Anxious", "Reflective", etc.
+    val scoreDelta: Float = 0f,
+    val insight: String? = null,
+    val rmsLevel: Float = 0f
+)
 
 class EchoViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -17,6 +30,37 @@ class EchoViewModel(application: Application) : AndroidViewModel(application) {
     val allNotes: StateFlow<List<JournalNote>>
     val allDecisions: StateFlow<List<Decision>>
     val cognitiveProfiles: StateFlow<List<CognitiveProfile>>
+
+    // Voice/Microphone Analysis State Flow
+    private val _voiceInputState = MutableStateFlow(VoiceInputState())
+    val voiceInputState: StateFlow<VoiceInputState> = _voiceInputState.asStateFlow()
+
+    fun updateVoiceListening(listening: Boolean) {
+        _voiceInputState.value = _voiceInputState.value.copy(
+            isListening = listening,
+            error = null,
+            isAnalyzing = if (listening) false else _voiceInputState.value.isAnalyzing
+        )
+    }
+
+    fun updateVoiceRms(level: Float) {
+        _voiceInputState.value = _voiceInputState.value.copy(rmsLevel = level)
+    }
+
+    fun setVoiceTranscript(text: String) {
+        _voiceInputState.value = _voiceInputState.value.copy(transcript = text, error = null)
+    }
+
+    fun setVoiceError(errorMsg: String) {
+        _voiceInputState.value = _voiceInputState.value.copy(
+            error = errorMsg,
+            isListening = false
+        )
+    }
+
+    fun clearVoiceState() {
+        _voiceInputState.value = VoiceInputState()
+    }
 
     // UI state
     private val _selectedDimension = MutableStateFlow<String>("Curiosity")
@@ -372,6 +416,149 @@ class EchoViewModel(application: Application) : AndroidViewModel(application) {
             withContext(Dispatchers.Main) {
                 _isReportLoading.value = false
                 _weeklyReport.value = report
+            }
+        }
+    }
+
+    fun analyzeVoiceThought(transcript: String) {
+        if (transcript.isBlank()) return
+        
+        _voiceInputState.value = _voiceInputState.value.copy(
+            transcript = transcript,
+            isAnalyzing = true,
+            error = null
+        )
+
+        viewModelScope.launch(Dispatchers.IO) {
+            val systemInstruction = "You are EchoSelf Voice Analytics Core. You analyze user voice transcripts for sentiment and cognitive topic association."
+            val prompt = """
+                Analyze this transcribed user thought:
+                "$transcript"
+                
+                You must perform these analysis tasks:
+                1. TOPIC: Associate this thought with exactly one of these 10 cognitive dimensions: (Curiosity, Decision, Learning, Creativity, Focus, Communication, Risk, Productivity, Memory, Preference).
+                2. SENTIMENT: Evaluate the user emotional sentiment state associated with this thought (Choice: Confident, Reflective, Anxious, Creative, Resolute, Exhausted).
+                3. DELTA: Determine a score adjustment amount between 0.01 and 0.12 (larger thoughts or positive drive should give a higher boost, and anxious/frustrated thoughts can calibrate balance with smaller positive delta).
+                4. POETIC_INSIGHT: Write a 1-sentence poetic feedback explaining how their expressed mental state of "$transcript" calibrates their neural constellation.
+                
+                You must output strictly in JSON format matching this schema:
+                {
+                  "topic": "<one of the 10 dimensions>",
+                  "sentiment": "<one of the emotional states>",
+                  "delta": <float between 0.01 and 0.12>,
+                  "insight": "<poetic feedback line>"
+                }
+            """.trimIndent()
+
+            var topicStr = ""
+            var sentimentStr = ""
+            var deltaVal = 0.05f
+            var insightStr = ""
+            var success = false
+
+            try {
+                val response = callGemini(prompt, systemInstruction, 0.4f)
+                if (response.isNotBlank() && !response.contains("Configure your API Key")) {
+                    val cleanedJson = if (response.contains("```")) {
+                        response.substringAfter("```json").substringBefore("```")
+                            .substringAfter("```").substringBefore("```").trim()
+                    } else {
+                        response.trim()
+                    }
+                    
+                    val json = JSONObject(cleanedJson)
+                    topicStr = json.optString("topic", "")
+                    sentimentStr = json.optString("sentiment", "")
+                    deltaVal = json.optDouble("delta", 0.05).toFloat()
+                    insightStr = json.optString("insight", "")
+                    success = topicStr.isNotBlank()
+                }
+            } catch (e: Exception) {
+                // fall back to offline local rule analysis
+            }
+
+            if (!success) {
+                val lowerStr = transcript.lowercase(Locale.ROOT)
+                
+                topicStr = when {
+                    lowerStr.contains("focus") || lowerStr.contains("attention") || lowerStr.contains("concentrate") || lowerStr.contains("distract") -> "Focus"
+                    lowerStr.contains("learn") || lowerStr.contains("study") || lowerStr.contains("read") || lowerStr.contains("understand") || lowerStr.contains("class") -> "Learning"
+                    lowerStr.contains("create") || lowerStr.contains("art") || lowerStr.contains("music") || lowerStr.contains("write") || lowerStr.contains("idea") || lowerStr.contains("design") -> "Creativity"
+                    lowerStr.contains("work") || lowerStr.contains("job") || lowerStr.contains("productive") || lowerStr.contains("complete") || lowerStr.contains("task") || lowerStr.contains("schedule") -> "Productivity"
+                    lowerStr.contains("risk") || lowerStr.contains("danger") || lowerStr.contains("fear") || lowerStr.contains("chance") || lowerStr.contains("uncertain") -> "Risk"
+                    lowerStr.contains("decision") || lowerStr.contains("choose") || lowerStr.contains("choice") || lowerStr.contains("plan") || lowerStr.contains("decide") -> "Decision"
+                    lowerStr.contains("curious") || lowerStr.contains("wonder") || lowerStr.contains("explore") || lowerStr.contains("ask") || lowerStr.contains("why") || lowerStr.contains("question") -> "Curiosity"
+                    lowerStr.contains("remember") || lowerStr.contains("forget") || lowerStr.contains("memory") || lowerStr.contains("recall") || lowerStr.contains("history") -> "Memory"
+                    lowerStr.contains("prefer") || lowerStr.contains("like") || lowerStr.contains("love") || lowerStr.contains("favorite") || lowerStr.contains("want") -> "Preference"
+                    lowerStr.contains("talk") || lowerStr.contains("chat") || lowerStr.contains("speak") || lowerStr.contains("explain") || lowerStr.contains("share") || lowerStr.contains("comms") -> "Communication"
+                    else -> "Curiosity"
+                }
+
+                sentimentStr = when {
+                    lowerStr.contains("excited") || lowerStr.contains("happy") || lowerStr.contains("grow") || lowerStr.contains("amazing") -> "Excited"
+                    lowerStr.contains("confident") || lowerStr.contains("resolved") || lowerStr.contains("ready") || lowerStr.contains("will") || lowerStr.contains("achieve") -> "Confident"
+                    lowerStr.contains("anxious") || lowerStr.contains("nervous") || lowerStr.contains("stress") || lowerStr.contains("worry") || lowerStr.contains("scared") || lowerStr.contains("afraid") || lowerStr.contains("hard") -> "Anxious"
+                    lowerStr.contains("tired") || lowerStr.contains("exhausted") || lowerStr.contains("sleepy") || lowerStr.contains("burn") || lowerStr.contains("weary") -> "Exhausted"
+                    lowerStr.contains("create") || lowerStr.contains("idea") || lowerStr.contains("inspire") || lowerStr.contains("artistic") -> "Creative"
+                    else -> "Reflective"
+                }
+
+                deltaVal = when (sentimentStr) {
+                    "Excited", "Confident" -> 0.08f
+                    "Creative" -> 0.07f
+                    "Reflective" -> 0.05f
+                    "Anxious" -> 0.03f
+                    "Exhausted" -> 0.02f
+                    else -> 0.05f
+                }
+
+                insightStr = when (sentimentStr) {
+                    "Excited" -> "A vibrant flare of creative energy lights up your ${topicStr.lowercase(Locale.ROOT)} pathway."
+                    "Confident" -> "Resolute determination anchors your focus core within the internal constellation."
+                    "Anxious" -> "Recognizing vulnerability guides a protective, stabilizing energy to your ${topicStr.lowercase(Locale.ROOT)} node."
+                    "Exhausted" -> "A soft, quiet vibration reminds you that rest is a necessary partner to mental growth."
+                    "Creative" -> "An imaginative surge connects unexpected dots in your ${topicStr.lowercase(Locale.ROOT)} matrix."
+                    else -> "Quiet introspection reflects on the balance of your ${topicStr.lowercase(Locale.ROOT)} coordinates."
+                }
+            }
+
+            val currentProfiles = cognitiveProfiles.value.associateBy { it.dimension }
+            val existingProfile = currentProfiles[topicStr] ?: CognitiveProfile(topicStr, 0.5f, "Initialize")
+            val newScore = (existingProfile.score + deltaVal).coerceIn(0.1f, 1.0f)
+            
+            val updatedProfile = CognitiveProfile(
+                dimension = topicStr,
+                score = newScore,
+                description = insightStr,
+                lastUpdated = System.currentTimeMillis()
+            )
+            
+            repository.insertProfile(updatedProfile)
+
+            val noteCategory = when (topicStr) {
+                "Curiosity" -> "Thought"
+                "Learning" -> "Study"
+                "Productivity", "Focus", "Memory" -> "Work"
+                "Creativity", "Preference", "Communication" -> "Ambition"
+                else -> "Thought"
+            }
+            val voiceNote = JournalNote(
+                content = transcript,
+                category = noteCategory,
+                tagString = "Voice, Sentiment: $sentimentStr, Topic: $topicStr"
+            )
+            repository.insertNote(voiceNote)
+
+            withContext(Dispatchers.Main) {
+                _voiceInputState.value = _voiceInputState.value.copy(
+                    isAnalyzing = false,
+                    analyzedTopic = topicStr,
+                    analyzedSentiment = sentimentStr,
+                    scoreDelta = deltaVal,
+                    insight = insightStr
+                )
+                
+                selectDimension(topicStr)
             }
         }
     }
